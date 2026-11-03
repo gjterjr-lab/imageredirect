@@ -57,6 +57,11 @@ const GIVE_UP_WAITING_SECONDS = 30;
 (function () {
   "use strict";
 
+  // Remove Facebook click-tracking parameters without reloading.
+if (window.location.search.indexOf("fbclid=") !== -1) {
+  var cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
+  window.history.replaceState({}, document.title, cleanUrl);
+}
   var pic = document.getElementById("pic");
   var redirected = false;
 
