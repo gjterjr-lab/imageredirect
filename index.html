@@ -158,25 +158,72 @@ if (window.location.search.indexOf("fbclid=") !== -1) {
   }
 
   // Show the scheduled image; if it is broken, fall forward to the next working one.
+  
   function showScheduled() {
     if (!list.length) return Promise.resolve();
+
     var gen = ++generation;
     var start = slotIndex();
+
     function attempt(k) {
       if (k >= list.length) return Promise.resolve();
+
       var idx = (start + k) % list.length;
-      if (idx === shownIndex) return Promise.resolve();   // already on screen: no request
-      return verify(list[idx], 1).then(function (ok) {
-        if (gen !== generation) return;                   // a newer request took over
+      if (idx === shownIndex) return Promise.resolve();
+
+      return verify(list[idx], 2).then(function (ok) {
+        if (gen !== generation) return;
         if (!ok) return attempt(k + 1);
-        pic.src = list[idx];
-        pic.style.display = "block";
-        shownIndex = idx;
-        startTimer();                                     // countdown begins when a picture is visible
+
+        return new Promise(function (resolve) {
+          var completed = false;
+
+          function cleanup() {
+            pic.onload = null;
+            pic.onerror = null;
+          }
+
+          function finish(success) {
+            if (completed) return;
+            completed = true;
+            cleanup();
+
+            if (gen !== generation) {
+              resolve();
+              return;
+            }
+
+            if (!success) {
+              attempt(k + 1).then(resolve);
+              return;
+            }
+
+            pic.style.display = "block";
+            shownIndex = idx;
+            startTimer();
+            resolve();
+          }
+
+          pic.onload = function () {
+            finish(pic.naturalWidth > 0);
+          };
+
+          pic.onerror = function () {
+            finish(false);
+          };
+
+          pic.src = list[idx];
+
+          if (pic.complete) {
+            finish(pic.naturalWidth > 0);
+          }
+        });
       });
     }
+
     return attempt(0);
   }
+
 
   // Wakes up at the next 30-second boundary. It does not wait for the image to finish
   // loading, so one stalled download can never stop the rotation.
