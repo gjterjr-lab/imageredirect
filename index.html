@@ -1,6 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  
+  // Automatically reload the complete page 3 times per visit.
+  // The fourth load continues with the normal website.
+  var reloadKey = "site_auto_reload_count";
+  var reloadCount = 0;
+
+  try {
+    reloadCount = Number(sessionStorage.getItem(reloadKey)) || 0;
+
+    if (reloadCount < 3) {
+      sessionStorage.setItem(reloadKey, String(reloadCount + 1));
+
+      var reloadDelays = [150, 350, 700];
+
+      setTimeout(function () {
+        window.location.reload();
+      }, reloadDelays[reloadCount]);
+
+      return;
+    }
+
+    sessionStorage.removeItem(reloadKey);
+
+  } catch (e) {
+    // Continue normally if session storage is unavailable.
+  }
+      
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>&nbsp;</title>
