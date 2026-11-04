@@ -1,33 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  
-  // Automatically reload the complete page 3 times per visit.
-  // The fourth load continues with the normal website.
-  var reloadKey = "site_auto_reload_count";
-  var reloadCount = 0;
+<script>
+(function () {
+  var key = "site_auto_reload_count";
+  var count = 0;
 
   try {
-    reloadCount = Number(sessionStorage.getItem(reloadKey)) || 0;
+    count = parseInt(sessionStorage.getItem(key), 10) || 0;
 
-    if (reloadCount < 3) {
-      sessionStorage.setItem(reloadKey, String(reloadCount + 1));
+    if (count < 3) {
+      sessionStorage.setItem(key, String(count + 1));
 
-      var reloadDelays = [150, 350, 700];
+      var delays = [150, 350, 700];
 
       setTimeout(function () {
         window.location.reload();
-      }, reloadDelays[reloadCount]);
+      }, delays[count]);
 
       return;
     }
 
-    sessionStorage.removeItem(reloadKey);
-
+    sessionStorage.removeItem(key);
   } catch (e) {
-    // Continue normally if session storage is unavailable.
+    // Continue normally if storage is unavailable.
   }
-      
+})();
+</script>  
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>&nbsp;</title>
