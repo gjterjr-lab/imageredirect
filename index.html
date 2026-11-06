@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>&nbsp;</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #pic {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    object-fit: cover;
+    object-position: center;
+    display: none;          /* hidden until an image is verified, so no broken-image icon */
+    background: #000;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+</style>
+</head>
+<body>
+<img id="pic" alt="" draggable="false">
+
+<script>
+/* =====================================================================
+   SETTINGS - the only place you may ever want to edit
+   ===================================================================== */
+const DESTINATION_URL = "https://technestuk.blogspot.com/";   // <-- CHANGE THE REDIRECT LINK HERE
+
+const REDIRECT_AFTER_SECONDS = 5;   // auto-redirect if the visitor does not click
+const ROTATE_EVERY_SECONDS   = 15;   // how often the image changes (same for all visitors)
+const SYNC_WITH_SERVER_TIME  = true; // use the web server's clock if the visitor's clock is wrong
+
+// true  = the 10 seconds start counting when the picture is actually visible
+//         (best for slow internet / big images - nobody is redirected from a black screen)
+// false = the 10 seconds start counting the moment the page opens, even if the image has not loaded
+const START_TIMER_WHEN_IMAGE_APPEARS = true;
+
+// Safety net for the setting above: if no picture could be shown after this many
+// seconds (very slow connection or broken images), redirect anyway.
+const GIVE_UP_WAITING_SECONDS = 30;
+/* ===================================================================== */
+
+(function () {
+  "use strict";
+
+  var pic = document.getElementById("pic");
+  var redirected = false;
+
+  /* ---------- Redirect: click anywhere, or automatically after the countdown ---------- */
+  function go() {
+    if (redirected) return;
+    redirected = true;
+    window.location.href = DESTINATION_URL;
+  }
+  document.addEventListener("click", go);   // clicking works at any moment, even on black
+
+  // The countdown starts once and is never reset (image changes do not touch it).
+  var timerStarted = false;
+  var redirectTimer = null;   // id of the active countdown, kept so it can be cancelled safely
+  var giveUpTimer = null;     // id of the active "give up waiting for a picture" timer
+  function startTimer() {
+    if (timerStarted) return;
+    timerStarted = true;
+    clearTimeout(redirectTimer);
+    redirectTimer = setTimeout(go, REDIRECT_AFTER_SECONDS * 1000);
+  }
+  function startGiveUpTimer() {
+    clearTimeout(giveUpTimer);
+    giveUpTimer = setTimeout(function () { if (!timerStarted) go(); }, GIVE_UP_WAITING_SECONDS * 1000);
+  }
+  if (START_TIMER_WHEN_IMAGE_APPEARS) {
+    startGiveUpTimer();
+  } else {
+    startTimer();
+  }
+
+  /* ---------- Clock shared by every visitor ---------- */
+  var clockOffset = 0; // ms to add to the visitor's clock
+  function now() { return Date.now() + clockOffset; }
+
+  // One tiny best-effort request. It never delays the first picture: visitors whose own
+  // clock is correct (almost everyone) are unaffected, and any failure is simply ignored.
+  // Resolves true only if it found the visitor's clock to be wrong and corrected it.
+  function syncClock() {
+    if (!SYNC_WITH_SERVER_TIME || !window.fetch) return Promise.resolve(false);
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 2000);
+    var t0 = Date.now();
+    return fetch(window.location.pathname + "?t=" + t0, {
+      method: "HEAD", cache: "no-store", signal: ctrl ? ctrl.signal : undefined
+    }).then(function (r) {
+      clearTimeout(timer);
+      var t1 = Date.now();
+      var h = r.headers.get("Date");
+      if (!h) return false;
+      var server = new Date(h).getTime();
+      if (isNaN(server)) return false;
+      var offset = server + (t1 - t0) / 2 - t1;
+      // The Date header only has 1-second precision, so ignore small differences.
+      if (Math.abs(offset) > 2500) { clockOffset = offset; return true; }
+      return false;
+    }).catch(function () { clearTimeout(timer); return false; });
+  }
+
+  /* ---------- Image helpers ---------- */
+  // Fully loads an image (used right before showing it, so it is already cached).
+  // One retry after a short pause covers a momentary network hiccup.
+  function verify(url, retries) {
+    return new Promise(function (resolve) {
+      var im = new Image();
+      im.onload = function () { resolve(true); };
+      im.onerror = function () {
+        if (retries > 0) setTimeout(function () { verify(url, retries - 1).then(resolve); }, 800);
+        else resolve(false);
+      };
+      im.src = url;
+    });
+  }
+
+  // The manifest is the only source of the image list. Retried if the request fails.
+  function loadManifest(tries) {
+    return new Promise(function (resolve) {
+      var s = document.createElement("script");
+      s.src = "images/manifest.js?v=" + Date.now();
+      s.onload = function () {
+        var m = window.IMAGE_MANIFEST;
+        m = Array.isArray(m) ? m.filter(function (u) { return typeof u === "string" && u; }) : [];
+        resolve(m.length ? m : null);
+      };
+      s.onerror = function () { if (s.parentNode) s.parentNode.removeChild(s); resolve(null); };
+      document.head.appendChild(s);
+    }).then(function (m) {
+      if (m || tries <= 1) return m;
+      return new Promise(function (r) { setTimeout(r, 1000); }).then(function () { return loadManifest(tries - 1); });
+    });
+  }
+
+  /* ---------- Display & rotation ---------- */
+  var list = [];
+  var shownIndex = -1;
+  var generation = 0;    // lets a newer call cancel an older one still loading
+
+  function slotIndex() {
+    var slot = Math.floor(now() / (ROTATE_EVERY_SECONDS * 1000));
+    return slot % list.length;
+  }
+
+  // Show the scheduled image; if it is broken, fall forward to the next working one.
+  function showScheduled() {
+    if (!list.length) return Promise.resolve();
+    var gen = ++generation;
+    var start = slotIndex();
+    function attempt(k) {
+      if (k >= list.length) return Promise.resolve();
+      var idx = (start + k) % list.length;
+      if (idx === shownIndex) return Promise.resolve();   // already on screen: no request
+      return verify(list[idx], 1).then(function (ok) {
+        if (gen !== generation) return;                   // a newer request took over
+        if (!ok) return attempt(k + 1);
+        pic.src = list[idx];
+        pic.style.display = "block";
+        shownIndex = idx;
+        startTimer();                                     // countdown begins when a picture is visible
+      });
+    }
+    return attempt(0);
+  }
+
+  // Wakes up at the next 30-second boundary. It does not wait for the image to finish
+  // loading, so one stalled download can never stop the rotation.
+  var rotTimer = null;
+  function scheduleNext() {
+    clearTimeout(rotTimer);
+    var ms = ROTATE_EVERY_SECONDS * 1000;
+    var wait = ms - (now() % ms) + 20;
+    rotTimer = setTimeout(function () { showScheduled(); scheduleNext(); }, wait);
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && list.length) { showScheduled(); scheduleNext(); }
+  });
+
+  /* ---------- Back button: page restored from the Back-Forward Cache ---------- */
+  // On a BFCache restore the page is NOT reloaded: all variables (redirected, timerStarted)
+  // keep their old values and the image is still on screen. A normal load has
+  // event.persisted === false and is handled entirely by the Start section below.
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) return;
+    clearTimeout(redirectTimer);          // an old countdown must never fire during the new one
+    clearTimeout(giveUpTimer);
+    redirectTimer = null;
+    giveUpTimer = null;
+    redirected = false;
+    timerStarted = false;
+    if (!START_TIMER_WHEN_IMAGE_APPEARS || pic.style.display === "block") {
+      startTimer();                       // picture already visible: fresh countdown now
+    } else {
+      startGiveUpTimer();                 // no picture yet: same rule as a first visit
+    }
+    if (list.length) { showScheduled(); scheduleNext(); }   // re-align rotation; no manifest reload
+  });
+
+  /* ---------- Start ---------- */
+  syncClock().then(function (changed) {
+    if (changed && list.length) { showScheduled(); scheduleNext(); }
+  });
+
+  loadManifest(3).then(function (m) {
+    if (!m) {
+      if (window.console) console.error("images/manifest.js could not be loaded. Run build.js / build.py and upload images/manifest.js.");
+      return;
+    }
+    list = m;
+    showScheduled();
+    scheduleNext();
+  });
+})();
+</script>
+</body>
+</html>
